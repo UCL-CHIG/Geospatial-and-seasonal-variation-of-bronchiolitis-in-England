@@ -6,7 +6,7 @@ English Hospital Episode Statistics Admitted Patient Care (HES APC) records.
 # Associated publication
 Lewis KM, De Stavola B, Hardelid P. Geospatial and seasonal variation of bronchiolitis in England: a cohort study using hospital episode statistics. Thorax 2020;75:262-268. 
 # Authors
-Kate Lewis<b/>
-Pia Hardelid<b/>
-Bianca De Stavola<b/>
+Kate Lewis<br/>
+Pia Hardelid<br/>
+Bianca De Stavola<br/>
 # Acknowledgements 
