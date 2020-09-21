@@ -1,0 +1,442 @@
+***********************************************************
+* Title: Geospatial and seasonal variation of bronchiolitis in England
+* Authors: Kate Lewis, Pia Hardelid and Bianca de Stavola
+* Date paper published: January 20, 2020
+* DOI: http://dx.doi.org/10.1136/thoraxjnl-2019-213764 
+***********************************************************
+
+/************************************************************
+PROJECT DESCRIPTION:
+We sought to describe spatial variation in the seasonality of hospital admissions for bronchiolitis and its association with local demographic characteristics
+
+DO-FILE DESCRIPTION:
+Prepares bronchiolitis admission data, produces descriptive statistics and runs seasonality analyses
+
+REQUIRED DATASETS: 
+1. HES APC data - Data can be obtained by submitting a data request through the NHS Digital Data Access Request Service.
+"New files\APC 2011 2016_bronch.dta" contains singleton children born between 2011 and 2016 in English NHS-funded hospitals to mothers with an English address, linked to subseqeunt hospital admissions with a primary or secondary diagnoses of bronchiolitis (ICD-10 J21 codes)
+
+2. CCG level data - freely available to download
+A) Index of multiple deprivation by CCG from Ministry of Housing Communities & Local Government. https://gov.uk/government/statistics/english-indices-of-deprivation-2015
+   Population density, calculated as the number of residents per square kilometre, from:
+B) Annual CCG population size (from the ONS https://ons.gov.uk/releases/smallareapopulationestimatesinenglandandwalesmid2016) and CCG area size 
+C) and the area of each CCG in square kilometres (estimated using polygon areas in QGIS (open source software, available: http://qgis.osgeo.org)
+D) Centroids of CCGs from the ONS Open Geography Portal. https://geoportal.statistics.gov.uk/datasets/nhs-postcode-directory-latest-centroids. 
+
+REQUIRED VARIABLES (label in code): date of birth (bday), region of residence (resgor), bronchiolitis admission date (adm_use), bronchiolitis discharge date (disd_use), unique identifier (hesid),  IMD score by CCG (IMDaveragescore), population density by CCG (pop_dens), latitude of CCG centroid (lat), longitude of CCG centroid (lon)
+************************************************************/
+
+CODE: 
+
+*+++++++++++++++++++++ SURVIVAL SET DATA AND ESTABLISH 1 YEAR FOLLOW UP ++++++++++++++++++++++++++++
+
+forvalues k=2011/2016 {
+	local a=`k'+1
+	use "raw_data\APC 2011 2016_bronch.dta", clear
+	drop if bday<mdy(01,01,`k') | bday>mdy(12,31,`k')
+	
+**** date of entry ******
+gen		d_entry = max(bday, mdy(01,01,`k'))
+format		d_entry %td
+lab var		d_entry "date of entry"
+
+*********** date of exit *************
+/* death, 1st birthday or end of follow-up*/
+gen 		end_fup=bday+365.25 	
+gen		end=min(end_fup, dod, mdy(12,31,`a'))
+replace		end=mdy(12,31,2016) if end>mdy(12,31,2016)
+format		end %td
+lab var 	end "date of exit - death or end of follow-up"
+
+****censor children who appear to have moved out of the country at half-way between first date at which the first non-resident admission occurred
+gen 		non_res=1 if resgor1=="W"|resgor1=="S"|resgor1=="Z"|resgor1=="X"	
+bysort 		hesid (non_res admd_use): gen first_nonres_adm=admd_use if _n==1 & non_res==1
+gen 		non_res_date= (first_nonres_adm+bday)/2
+replace 	end = non_res_date if non_res_date!=. & non_res_date<end & non_res_date>d_entry
+
+***children need to be alive for at least one day to be in the cohort 
+drop 		if d_entry>=end
+gen		admidate_bronch_any_use=admd_use
+replace		admidate_bronch_any_use=. if bronch_any_use!=1
+gen		disd_compl_bronch_any_use=disd_use
+replace		disd_compl_bronch_any_use=. if bronch_any_use!=1
+
+***set admission dates to missing if before start or after the end date
+replace 	admidate_bronch_any_use=. if admidate_bronch_any_use<d_entry | admidate_bronch_any_use>end
+
+***keep one record per admission date
+bysort		hesid admidate_bronch_any_use: keep if _n==1
+
+***make sure each child who has event is included until the end of follow-up
+bysort		hesid (admidate_bronch_any_use): gen last=1 if _n==_N & admidate_bronch_any_use!=.
+expand		2 if last==1
+drop		last
+bysort		hesid (admidate_bronch_any_use): replace admidate_bronch_any_use=. if _n==_N
+
+***replace end date with 14 days after dishcarge date of admission
+gen 		start_bronch_any_use=d_entry
+gen		end_bronch_any_use=end
+bysort		hesid (admidate_bronch_any_use): replace start_bronch_any_use =admidate_bronch_any_use[_n-1]+14 if admidate_bronch_any_use[_n-1]!=. 
+bysort		hesid (admidate_bronch_any_use): replace start_bronch_any_use =disd_compl_bronch_any_use[_n-1] if admidate_bronch_any_use[_n-1]!=. & disd_compl_bronch_any_use[_n-1]-admidate_bronch_any_use[_n-1]>14
+replace		end_bronch_any_use=admidate_bronch_any_use if admidate_bronch_any_use!=.
+replace		end_bronch_any_use=end_bronch_any_use+0.5 if start_bronch_any_use==end_bronch_any_use & admidate_bronch_any_use!=.
+drop		if start_bronch_any_use==end_bronch_any_use & admidate_bronch_any_use==. 
+
+* ENTRY FOR MULTIPLE ADMISSIONS IS LAST ADMISSION + 14 DAYS 
+bysort		hesid (start_bronch_any_use): replace d_entry=start_bronch_any_use  if admidate_bronch_any_use==. & admd_use!=.
+
+***generate event indicator
+gen		event=1 if admidate_bronch_any_use!=.
+replace		event=0 if event==. 
+
+***stset data
+stset		end_bronch_any_use, id(hesid) origin(time bday) time0(start_bronch_any_use)  failure(event) exit(time .)
+
+save "dataset\stsplit_`k'.dta", replace
+
+}
+
+
+*+++++++++++++++++++++ DESCRIPTIVE STATISTICS  ++++++++++++++++++++++++++++
+
+use "dataset\stsplit_2016.dta", clear 
+append using "dataset\stsplit_2015.dta" 
+append using "dataset\stsplit_2014.dta" 
+append using "dataset\stsplit_2013.dta" 
+append using "dataset\stsplit_2012.dta" 
+append using "dataset\stsplit_2011.dta"
+
+*create person-time
+stsplit 	week_pyrs, at(0(7.024038)365.25) 
+gen		pyrs=_t-_t0
+
+*create	timeseries: from dates
+gen		date=_origin+_t
+format		date %td
+gen		year_event=year(date)
+gen		month_event=month(date)
+gen		week_event=week(date)
+drop		date
+
+*invalid rows
+drop if 	_st==0
+drop		if year_event==2011 | year_event==2017 
+
+*descriptive statistics
+bysort		hesid: gen count=_n
+tab		count
+tab		region if count==1
+gen		year=year(_origin)
+tab		year if count==1
+	
+strate 		, per(365250) 
+strate 		region, per(365250) 			
+strate 		year_event, per(365250) 	
+
+preserve
+collapse	(sum) _d pyrs, by (region week_event)	
+sort		region week_event
+gen		rate=(_d/pyrs)*365250
+drop		_d pyrs 
+reshape		wide rate, i(week_event) j(region)	
+list		rate1 rate2 rate3 rate4 rate5 rate6 rate7 rate8 rate9, clean
+restore 
+
+preserve
+collapse	(sum) _d pyrs, by (year_event week_event)	
+sort		year_event week_event
+gen		rate=(_d/pyrs)*365250
+list		year_event week_event rate, clean
+restore 
+
+save 		"geo\geo_stsplit.dta", replace
+
+*+++++++++++++++++++++ MULTIVARIABLE MODEL: by REGION  ++++++++++++++++++++++++++++
+
+*convert data into easier to manage file
+use 	"geo\geo_stsplit.dta",clear
+keep 	week_event region year_event hesid d_entry end_fup end ///
+	start_bronchiolitis_any_use end_bronchiolitis_any_use ///
+	event _st _d _origin _t _t0 year_event				
+qui	strate region week_event year_event, output ("geo\geo_stsplit_strate region.dta", replace)
+
+use "geo\geo_stsplit_strate region.dta",clear
+
+*generate cos sine terms
+gen			sine=sin(2*_pi*1/52*(week_event-1))
+gen 			cos=cos(2*_pi*1/52*(week_event-1))
+
+*final model
+poisson 		_D c.sine#ib7.region c.cos#ib7.region sine cos ib2013.year_event ///
+
+				ib7.region, vce(robust) exp(_Y) 
+*test interaction
+testparm		c.sine#ib7.region c.cos#ib7.region
+
+*event prediction for duration of epidemic
+predict			event_region
+preserve	
+collapse		(sum) event_region _Y, by (region week_event)
+gen			rate=(event_region/_Y)*365250
+list			region week_event rate, divider clean
+restore
+
+*lincom for week 50
+forvalues k=1(1)9{
+lincom `k'.region+(.9350162*cos#`k'.region)+(-.3546049*sine#`k'.region),irr
+}
+
+*lincom for week 51
+forvalues k=1(1)9{
+lincom `k'.region+(.9709418*cos#`k'.region)+(-.2393157*sine#`k'.region),irr
+}
+
+*SEASON PARAMETERS
+*!calculations for seasonality parmaters following Barnett AG, Dobson AJ. Analysing seasonal health data. Berlin: Springer-Verlag, 2010.
+gen b0=_b[_cons]
+gen b1=_b[sine]
+gen b2=_b[cos]
+
+forvalues k=1(1)9{
+gen alpha`k'=_b[`k'.region]
+gen delta1`k'=_b[c.sine#`k'.region]
+gen delta2`k'=_b[c.cos#`k'.region]
+}
+
+forvalues k=1(1)9{
+gen b0`k'=b0+alpha`k' 
+gen b1`k'=b1+delta1`k'
+gen b2`k'=b2+delta2`k'
+}
+
+forvalues k=1(1)9{
+label var b0`k' "intercept for region_`k'"
+label var b1`k' "sine coef for region_`k'"
+label var b2`k' "cosine coef for region_`k'"
+}
+
+*amplitude, gamma: a*sqrt(b1^2+b2^2), where a=-1 if b2<0
+gen a=1
+forvalues k=1(1)9{
+replace a=-1 if b2`k'<0
+gen gamma`k'=a*(sqrt(b1`k'^2+b2`k'^2))
+}
+forvalues k=1(1)9{
+nlcom sqrt((_b[sine]+_b[sine#`k'.region])^2+(_b[cos]+_b[cos#`k'.region])^2)
+}
+
+**exp(amplitude) in poisson models
+forvalues k=1(1)9{
+gen gamma`k'_rate=exp(gamma`k')
+}
+forvalues k=1(1)9{
+nlcom exp(sqrt((_b[sine]+_b[sine#`k'.region])^2+(_b[cos]+_b[cos#`k'.region])^2))
+}
+
+*phase (in radians), psi:arctan(b1/b2)
+forvalues k=1(1)9{
+gen psi`k'=atan(b1`k'/b2`k')
+}
+forvalues k=1(1)9{
+nlcom atan((_b[sine]+_b[sine#`k'.region])/(_b[cos]+_b[cos#`k'.region]))
+}
+
+*estimates
+forvalues k=1(1)9{
+gen 	peak_week`k'=52.14*(psi`k'/(2*_pi))+1
+}
+forvalues k=1(1)9{
+nlcom 52.14*((atan((_b[sine]+_b[sine#`k'.region])/(_b[cos]+_b[cos#`k'.region])))/(2*_pi))+1
+}
+
+
+
+*+++++++++++++++++++++ MULTIVARIABLE MODEL: by CCG  ++++++++++++++++++++++++++++
+
+*convert data into easier to manage file
+use 		"geo\geo_stsplit.dta",clear
+keep 		week_event region CCG_number year_event hesid d_entry end_fup  ///
+		end start_bronchiolitis_any_use end_bronchiolitis_any_use ///
+		event _st _d _origin _t _t0 year_event
+qui strate 	CCG_number week_event year_event, output ("geo\geo_stsplit_strate.dta", replace)
+
+use 		"geo\geo_stsplit_strate.dta", clear	
+
+*generate cos sine terms
+gen		sin=sin(2*_pi*1/52.14*(week_event-1))
+gen 		cos=cos(2*_pi*1/52.14*(week_event-1))
+
+/* repeat analyses without london
+drop			if CCG_number==4 | CCG_number==5 | CCG_number==11 | CCG_number==20 | ///
+				CCG_number==23 | CCG_number==27 | CCG_number==31 | CCG_number==35 | ///
+				CCG_number==40 | CCG_number==48 | CCG_number==57 | CCG_number==66 | ///
+				CCG_number==70 | CCG_number==72 | CCG_number==74 | CCG_number==77 | ///
+				CCG_number==82 | CCG_number==84 | CCG_number==88 | CCG_number==90 | ///
+				CCG_number==92 | CCG_number==98 | CCG_number==105 | CCG_number==111 | ///
+				CCG_number==136 | CCG_number==138 | CCG_number==169 | CCG_number==177 | ///
+				CCG_number==184 | CCG_number==190  | CCG_number==191  | CCG_number==200
+*/ 
+
+mepoisson 		_D sin cos ib2013.year_event, exp(_Y) || CCG_number: sin cos
+				
+*random effects intercept: 
+predict 		rem_sin rem_cos rem_cons, remeans
+predict 		re_sin re_cos re_cons,reffects
+gen 			b1=_b[sine]+re_sin
+gen 			b2=_b[cos]+re_cos
+gen 			b0=_b[_cons]+re_cons
+gen 			IR_CCG=rem_cons
+
+*SEASON PARAMETERS
+*!calculations for seasonality parmaters following Barnett AG, Dobson AJ. Analysing seasonal health data. Berlin: Springer-Verlag, 2010.
+ 
+*amplitude, gamma: a*sqrt(b1^2+b2^2), where a=-1 if b2<0
+gen a=1
+replace a=-1 if b2<0
+gen gamma=a*(sqrt(b1^2+b2^2))
+
+**exp(amplitude) in poisson models
+gen gamma_rate=exp(gamma)
+
+*phase (in radians), psi:arctan(b1/b2)
+gen psi=atan(b1/b2)
+
+*estimates
+gen 	peak_week=52.14*(psi/(2*_pi))+1
+gen	mean_rate=exp(b0)*365250
+
+*merge with additional CCG information (IMD and population density)
+merge	m:1 CCG_number using "New files\CCG average imd popden.dta"
+drop	if peak_week==.
+drop 	_merge
+
+capture drop tolist
+by 	CCG_number, sort:gen tolist= _n==1
+list 	CCG_number CCGname pop_dens IMD_Averagescore peak_week IR_CCG if tolist, divider clean
+
+*make dataset by CCG only
+collapse (sum) _D _Y (mean) pop_dens IMD_Averagescore peak_week IR_CCG, by(CCG_number CCGname)
+			
+*new vars
+gen			log_pop=log(pop_dens)
+rename			IMD_Averagescore IMD
+replace			peak_week=52.14+peak_week
+
+*save output to use in autocorrelation analyses (below)
+save	"geo\geo_aftermodel.dta"
+
+*association between derived estimates and population charateristics
+**peak timing
+scatter peak_week log_pop
+regress peak_week log_pop
+estat vif
+estat esize
+rvfplot
+
+scatter peak_week IMD
+regress peak_week IMD
+estimates store a
+regress peak_week IMD c.IMD#c.IMD
+estimates store b
+lrtest a b
+testparm c.IMD#c.IMD /* need square term*/
+
+estat vif
+estat esize
+rvfplot
+
+*IRR
+scatter IR_CCG log_pop
+regress IR_CCG log_pop
+estat vif
+estat esize
+rvfplot
+
+scatter IR_CCG IMD
+regress IR_CCG IMD
+estat vif
+estat esize
+rvfplot
+
+*final multivariable  models 
+gen IRR_CCG=exp(IR_CCG)
+regress IRR_CCG c.IMD c.log_pop
+estat vif
+estat esize
+rvfplot
+predict fitted_IRR
+
+twoway qfitci fitted_IRR IMD, xaxis(1) ||  scatter fitted_IRR IMD || ///
+	qfitci fitted_IRR log_pop, xaxis(2) ||  scatter fitted_IRR log_pop, xaxis(2) 
+graph save "geo\fitted_IRR_line scatter.gph", replace
+
+twoway qfitci fitted_IR IMD, xaxis(1) || qfitci fitted_IR log_pop, xaxis(2) 
+graph save "gro\fitted_IR_line.gph", replace
+
+twoway scatter fitted_IR IMD || scatter fitted_IR log_pop, xaxis(2) 
+graph save "geo\fitted_IR_scatter.gph", replace
+
+regress peak_week c.log_pop c.IMD#c.IMD c.IMD
+estat vif
+estat esize
+rvfplot
+capture drop fitted_P
+predict fitted_PT
+
+twoway qfitci fitted_PT IMD, xaxis(1) ||  scatter fitted_PT IMD || ///
+		qfitci fitted_PT log_pop, xaxis(2) ||  scatter fitted_PT log_pop, xaxis(2)
+graph save "geo\fitted_tmax_line scatter.gph", replace
+
+twoway qfitci fitted_PT IMD, xaxis(1) ||  qfitci fitted_PT log_pop, xaxis(2)
+graph save "geo\fitted_tmax_line.gph", replace
+
+twoway scatter fitted_PT IMD, xaxis(1) ||  scatter fitted_PT log_pop, xaxis(2)
+graph save "geo\fitted_tmax_scatter.gph", replace
+
+
+*final models: without london (repeat above analyses and use below final models)
+regress IRR_CCG c.IMD c.log_pop
+estat vif
+estat esize
+rvfplot
+predict fitted_IRR
+twoway qfitci fitted_IRR IMD, xaxis(1) ||  scatter fitted_IRR IMD || ///
+		qfitci fitted_IRR log_pop, xaxis(2) ||  scatter fitted_IRR log_pop, xaxis(2) 
+graph save "geo\fitted_IRR_line scatter_nolon.gph", replace
+
+
+regress peak_week c.log_pop c.IMD#c.IMD c.IMD
+estat vif
+estat esize
+rvfplot
+capture drop fitted_P
+predict fitted_PT
+twoway qfitci fitted_PT IMD, xaxis(1) ||  scatter fitted_PT IMD || ///
+		qfitci fitted_PT log_pop, xaxis(2) ||  scatter fitted_PT log_pop, xaxis(2)
+graph save "geo\fitted_tmax_line scatter_nolon.gph", replace
+
+
+
+*+++++++++++++++++++++ TESTING AUTOCORRELATION: by CCG  ++++++++++++++++++++++++++++
+
+*create matrix
+sysdir set PLUS N:/
+cd N:/
+shp2dta using CCG2017, database(CCGdb) coordinates(CCGcoord) genid(id) replace
+
+***MORANS I
+import 		delimited "raw_data\CCG centroids.csv", clear 
+sort 		ccgname
+gen 		CCG_number=_n
+rename 		ccgname CCGName
+merge 		1:m CCG_number using "geo\geo_aftermodel.dta"
+keep 		if _merge==3
+drop 		_merge
+capture 	drop tolist
+by 		CCG_number, sort:gen tolist= _n==1
+keep 		if tolist==1
+spatwmat, 	stand name(CCGweight) xcoord(lon) ycoord(lat) band(0 10)
+matrix 		list CCGweight
+
+spatgsa 	IR_CCG, weights(CCGweight) moran
+spatgsa 	peak_week, weights(CCGweight) moran
