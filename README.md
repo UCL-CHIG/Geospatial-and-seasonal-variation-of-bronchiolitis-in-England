@@ -5,6 +5,7 @@ We sought to describe spatial variation (by region and clinical commissioning gr
 2) Index of multiple deprivation, by CCG. Freely available from the Ministry of Housing Communities & Local Government: https://gov.uk/government/statistics/english-indices-of-deprivation-2015.<br/>
 3) Annual CCG population size. Freely available from the Office for National Statistics (ONS): https://ons.gov.uk/releases/smallareapopulationestimatesinenglandandwalesmid2016. <br/>
 4) The area of each CCG in square kilometres. Estimated using polygon areas in QGIS, an open source software, available: http://qgis.osgeo.org.<br/>
+5) Centroids of each CCG. Freely available from the ONS Open Geography Portal. https://geoportal.statistics.gov.uk/datasets/nhs-postcode-directory-latest-centroids. 
 # Associated publication
 Lewis KM, De Stavola B, Hardelid P. Geospatial and seasonal variation of bronchiolitis in England: a cohort study using hospital episode statistics. Thorax 2020;75:262-268. [http://dx.doi.org/10.1136/thoraxjnl-2019-213764](http://dx.doi.org/10.1136/thoraxjnl-2019-213764)
 # Authors
