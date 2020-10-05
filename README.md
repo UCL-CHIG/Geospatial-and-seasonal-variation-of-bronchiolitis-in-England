@@ -10,7 +10,7 @@ We sought to describe spatial variation (by region and clinical commissioning gr
 Lewis KM, De Stavola B, Hardelid P. Geospatial and seasonal variation of bronchiolitis in England: a cohort study using hospital episode statistics. Thorax 2020;75:262-268. [http://dx.doi.org/10.1136/thoraxjnl-2019-213764](http://dx.doi.org/10.1136/thoraxjnl-2019-213764)
 # Authors
 Kate Lewis - [Github](https://github.com/LewisKate123) [Twitter](https://twitter.com/KateMarieLewis1)<br/>
-Pia Hardelid<br/> - [Github](https://github.com/kanelbulle778)
+Pia Hardelid - [Github](https://github.com/kanelbulle778)<br/>
 Bianca De Stavola<br/>
 # Acknowledgements 
 KML is funded by a Medical Research Council UK doctoral training studentship (MR/N013867/1). 
